@@ -1,0 +1,176 @@
+https://aws.amazon.com/free/    -> myAccount
+
+deployment need to install 3 things on aws server
+1 Java JDK
+2 Apache Web Server
+3 MySQL Database
+
+when mysql can not login (required password solved as following)
+https://stackoverflow.com/questions/39281594/error-1698-28000-access-denied-for-user-rootlocalhost
+$ sudo mysql -u root
+mysql> USE mysql;
+mysql> UPDATE user SET plugin='mysql_native_password' WHERE User='root';
+mysql> FLUSH PRIVILEGES;
+mysql> exit;
+$ sudo mysql -u root -p
+mysql> show databases;
+
+$ mysqladmin -u root password root  // mysql 重设密码 root
+
+name: spring-cur
+(public DNS)  ec2-18-224-137-77.us-east-2.compute.amazonaws.com
+aws key name: aws-pem-rsa.pem
+url: 18.224.137.77
+
+全部  Deploy 过程
+
+1. new instance
+
+Create Instance -> Ubuntu Server 16.04 LTS (SSD) > review Instance -> Edit Security Groups ->
+SSH + HTTP (add a rule) -> HTTPS (anywhere)
+-> Launch -> Create/Select Key Pair -> Review Instance
+
+2. install os
+
+cmd(user not adminstrator):  // replace  cmd: ssh aws-spring
+cmd:cd .ssh
+cmd:bash
+$: chmod 400 aws-pem-rsa.pem
+$: ssh -i aws-pem-rsa.pem ubuntu@ec2-18-224-137-77.us-east-2.compute.amazonaws.com
+
+$ sudo apt-get update
+$ sudo apt-get -y upgrade    // update Ubuntu system
+
+
+3. install mysql
+
+$ sudo apt-get install mysql-server   // install mysql and input password root
+
+mysql -u root -p  
+Enter password:  // root
+
+// Open workbench > server > database > data export > 'test': 
+// 1 Export to self-Contained File  : C:\Users\longy\Documents\dumps\Dump20180926.sql
+// 2 Create Dump in a Single Transactoion
+// 3 Include Create Schema
+// Start Export
+// copy the content of exported file Dump20180926.sql and paste to mysql shell of the server
+mysql> paste test.sql
+mysql> show databases test;
+mysql> show tables;
+mysql> exit;
+
+4 install apache
+
+// Apache Set Up
+$ sudo apt-get install apache2    //  at browser input url : you can see apache homepage
+
+
+5. prepare .war
+
+// in STS
+In Spring Boot Application File, add the following code:
+// MvcMmApplication
+import org.apache.catalina.connector.Connector;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.web.embedded.tomcat.TomcatServletWebServerFactory;
+import org.springframework.context.annotation.Bean;
+@SpringBootApplication
+public class MvcMmApplication {
+
+	public static void main(String[] args) {
+		SpringApplication.run(MvcMmApplication.class, args);
+	}
+	
+	@Bean
+    public TomcatServletWebServerFactory servletContainer() {
+        TomcatServletWebServerFactory tomcat = new TomcatServletWebServerFactory();
+        Connector ajpConnector = new Connector("AJP/1.3");
+        ajpConnector.setPort(9090);
+        ajpConnector.setSecure(false);
+        ajpConnector.setAllowTrace(false);
+        ajpConnector.setScheme("http");
+        tomcat.addAdditionalTomcatConnectors(ajpConnector);
+        return tomcat;
+    }
+}
+
+
+Go to 'pom.xml' file and Overview tab. If your packaging is jar, change it to war.
+
+STS > Project > Maven > Update Project
+
+STS > Project > Run as Maven Install
+
+There may got two errors:
+1. the requested profile "pom.xml" could not be activated because it does not exist.  // can ignore it
+2. No compiler is provided in this environment. Perhaps you are running on a JRE rather than a JDK?  // must fix it
+fixed method: STS > performence > Java > Installed JREs > jre1.8.0_181  (transfer to) jdk1.8.0_181
+https://stackoverflow.com/questions/19655184/no-compiler-is-provided-in-this-environment-perhaps-you-are-running-on-a-jre-ra
+after that got two files:
+C:\_Dojo\Spring\mvc_mm\target\mvc_mm-0.0.1-SNAPSHOT.war
+C:\_Dojo\Spring\mvc_mm\pom.xml
+
+6. copy .war to server 
+
+  at localhost 
+$ scp -i ~/Desktop/aws-pem-rsa.pem ~/Desktop/mvc_mm-0.0.1-SNAPSHOT.war ubuntu@18.224.137.77:~/
+
+  at server:
+$ sudo mkdir /var/springApp
+$ sudo mv ~/mvc_mm-0.0.1-SNAPSHOT.war /var/springApp/
+
+$ sudo a2enmod proxy
+$ sudo a2enmod proxy_ajp      // Set up proxy
+
+
+$ cd /etc/apache2/sites-available
+$ sudo vim 000-default.conf
+  At the end of this file add two lines: Vim edit keys: (esc+i insert) (esc+:q! quit not save) (esc+:wq save and quit)
+  ProxyPass / ajp://localhost:9090/
+  ProxyPassReverse / ajp://localhost:9090/
+
+$ sudo service apache2 restart
+
+$ sudo apt-get install default-jdk    // install jdk
+
+
+--------------    mvc_mm-0.0.1-SNAPSHOT.war   --------------------
+
+$ java -jar mvc_mm-0.0.1-SNAPSHOT.war    or    $ java -jar /var/springApp/mvc_mm-0.0.1-SNAPSHOT.war
+
+Go to Browser: 18.224.137.77  see the app
+
+-----------------------------------------------------------------
+
+cd /etc/systemd/system
+sudo touch auth.service
+sudo vim auth.service
+
+[Unit]
+Description=Auth application using Spring Boot
+After=syslog.target
+[Service]
+User=ubuntu
+ExecStart=/usr/bin/java -jar /var/springApp/mvc_mm-0.0.1-SNAPSHOT.war
+SuccessExitStatus=143
+[Install]
+WantedBy=multi-user.target
+
+
+
+$ sudo systemctl daemon-reload
+$ sudo systemctl enable auth.service
+$ sudo systemctl start auth
+
+
+goto browser: 18.224.137.77
+
+We can also stop, restart and check the status of our service:
+$ sudo systemctl stop auth
+$ sudo systemctl restart auth
+$ systemctl status auth     
+
+
+
